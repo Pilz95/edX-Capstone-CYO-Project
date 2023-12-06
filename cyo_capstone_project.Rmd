@@ -1,0 +1,529 @@
+---
+title: "Capstone - Choose Your Own Project"
+subtitle: 'Pima Indian Diabetes Database'
+author: "Fabian Pilz"
+date: "`r format(Sys.Date())`"
+output: 
+  pdf_document:
+    toc: yes
+    toc_depth: 3
+    number_sections: yes
+fontsize: 12pt
+editor_options: 
+  markdown: 
+    wrap: 72
+bibliography: cyo_capstone_project_bib.bibtex
+include-before: '`\newpage{}`{=latex}'
+csl: https://raw.githubusercontent.com/citation-style-language/styles/master/research-institute-for-nature-and-forest.csl
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(eval = TRUE, echo=FALSE, warning=FALSE, message=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=45)) # change knitr options
+
+# install packages using pacman
+if(!require(pacman)) install.packages('pacman', repos = 'http://cran.us.r-project.org')
+pacman::p_load(pacman, # Package Management Tool
+               tidyverse, # Easily Install and Load the 'Tidyverse'
+               magrittr, # A Forward-Pipe Operator for R
+               batman, # Convert Categorical Representations of Logicals to Actual Logicals
+               stringi, # Character String Processing Facilities; addition to stringr
+               rio, # A Swiss-Army Knife for Data I/O; imports readxl & openxlsx
+               tidylog, # Logging for 'dplyr' and 'tidyr' Functions; See what is happening 
+               janitor, # Simple Tools for Examining and Cleaning Dirty Data; clean column names
+               lubridate, # Make Dealing with Dates a Little Easier
+               caret, # Classification and Regression train
+               here, # A Simpler Way to Find Your Files
+               pdftools, # Text Extraction, Rendering and Converting of PDF Documents
+               matrixStats, # Functions that Apply to Rows and Columns of Matrices (and to Vectors)
+               Rborist, # Extensible, Parallelizable Implementation of the Random Forest Algorithm
+               randomForest, # Classification and regression based on a forest of trees
+               dslabs, # Data Science Labs
+               tinytex, # Install, Maintain and Compile LaTeX Documents
+               jsonlite, # only necessary if data is imported from datahub.io
+               corrplot, # Visualization of a Correlation Matrix
+               Hmisc, # Harrell Miscellaneous
+               plotROC, # Generate Useful ROC Curve Charts for Print and Interactive Use
+               caTools, # Moving Window Statistics, GIF, Base64, ROC AUC, etc
+               pROC, # Display and Analyze ROC Curves
+               mice, # Multivariate Imputation by Chained Equations
+               xgboost, # Extreme Gradient Boosting
+               klaR, # Classification and Visualization
+               rpart.plot, # Plot 'rpart' Models: An Enhanced Version of 'plot.rpart'
+               DescTools, # Tools for Descriptive Statistics
+               tinytex, # Helper Functions to Install and Maintain TeX Live, and Compile LaTeX Documents
+               formatR, # Format R Code Automatically
+               rmarkdown # Dynamic Documents for R
+)
+# load previously created data set / or data in general
+load(here('cyo_capstone_project.RData'))
+```
+
+\newpage
+# Introduction
+Diabetes, also known as diabetes mellitus, refers to a group of carbohydrate metabolic disorders that include impaired glucose homeostasis [@bano2013glucose]. About 1.5 million deaths worldwide are directly attributed to diabetes each year (https://www.who.int/health-topics/diabetes#tab=tab_1). It is also a major cause of blindness, kidney failure heart attacks and strokes. Type 1 diabetes is a chronic autoimmune disease with absolute insulin deficiency. Far more common is type 2 diabetes, usually in adults, which makes up about 90\% of the cases worldwide (https://www.diabetesatlas.org/upload/resources/material/20200302_133351_IDFATLAS9e-final-web.pdf). Rates are similar in women and men, with diabetes being the 7th-leading cause of death globally [@murray2013years].
+
+Pima or O'Odham refers to four tribal groups of North American natives in the southwestern United States and northern Mexico, each of whom spoke variants of the "Tepiman/Pima (Pimic) languages". A Pima Indian population near Phoenix, Arizona, has been monitored for diabetes by the National Institute of Diabetes and Digestive and Kidney Disease because of a high incidence rate [@knowler1981diabetes] [@smith1988using]. This dataset is a subset of the original larger database and contains only female patients who are at least 21 years old and is available at Kaggle (https://www.kaggle.com/datasets/uciml/pima-indians-diabetes-database).
+The dataset consists of one target variable, 'Outcome', and several predictor variables such as glucose level, age, BMI, etc.
+
+The objective of the project was to predict diabetes diagnoses accurately based on the diagnostic measures using machine learning algorithms. Since we have only two possible outcomes - diabetes or no diabetes - we are dealing with a classification problem.
+
+This report starts with an exploratory data analysis, followed by the an overview of the applied evaluation metrics. Different techniques to deal with classification problems are explained briefly and their application on the training data is presented in the Results section. The relative performance of the differenct models will be discussed afterwards followed by a conclusion which focuses on the limitations of the applied models, the data itself and closes with opportunies for future work.
+
+
+\newpage
+# Evaluation metrics
+To evaluate the performance of the different machine learning algorithms we first have to define evaluation metrics. We use:
+
+  - the *harmonic* average $F_1$ score, 
+  - overall accuracy,
+  - Cohen's kappa,
+  - sensitivity,
+  - specificity.
+  
+To get all of these parameters for a model at once, we define a suitable function.
+```{r confusionMatrix_params, eval=TRUE, echo=TRUE}
+# define harmonic average, because we have a classification problem; F_meas function of caret package
+# get params from confusion matrix
+confusionMatrix_params <- function(data, reference) {# confusionMatrix(data = predicted_outcomes, reference = diabetes_validation$outcome)
+  f_meas <- F_meas(data = data, reference = reference)
+  confusion_matrix <- confusionMatrix(data = data, reference = reference)
+  accuracy <- confusion_matrix$overall['Accuracy']
+  kappa <- confusion_matrix$overall['Kappa']
+  other_params <- confusion_matrix$byClass[c("Sensitivity","Specificity", "Pos Pred Value")]
+  params <- tibble(f_value = f_meas,
+                   accuracy = accuracy,
+                   kappa = kappa,
+                   sensitivity = other_params[1],
+                   specificity = other_params[2],
+                   precision = other_params[3]
+  )
+  return(params)
+}
+```
+In the case of two-class classification problems, there are four possible prediction outcomes.
+
+                   Actual Positive  Actual Negative
+------------------ ---------------- -----------------
+Predicted Positive True Positive     False Positive
+Predicted Negative False Negative    True Negative
+
+Specificity asks: "Out of all subjects that do not have the disease, how many got negative results?"
+$$ \mathrm{Specificity = \frac{\text{True Negatives}}{\text{True Negatives + False Positives}}} $$
+
+Precision represents the true positive fraction of all positive predictions.
+
+$$ \mathrm{Precision = \frac{\text{True Positives}}{\text{True Positives + False Positives}}} $$
+
+On the other hand, recall is the fraction of positives that were retrieved. Recall can also be called sensitivity or true positive rate.
+
+$$ \mathrm{Recall = \frac{\text{True Positives}}{\text{True Positives + False Negatives}}} $$
+
+The $F_{1}$ score is a way to combine precision and recall the following way:
+$$ F_{1} = 2*\frac{\text{Precision }\times\text{ Recall}}{\text{Precision + Recall}} $$
+A classifier can only  have a high $F_{1}$ score, also called *harmonic* average, if it has both high precision and high recall. Therefore, we ultimately use the $F_{1}$ score to select the final prediction model.
+Additionally, we report Cohen's kappa ($\kappa$) coefficient which is a statistic that is used to measure inter-rater reliability for categorical items. In the case of binary classifications the formula is the following:
+$$ \kappa = \mathrm{\frac{2\times(TP \times TN-FN \times FP)}{(TP + FP) \times (FP + TN) + (TP + FN) \times (FN + TN)}} $$
+where TP are the true positives, FP are the false positives, TN are the true negatives, and FN are the false negatives.
+
+\newpage
+# Data Import
+The data can be downloaded directly form an open source (https://datahub.io/machine-learning/diabetes/datapackage.json). For easier access, the data has been downloaded as a .csv file from Kaggle and saved in the project folder. It is imported using the following code:
+
+```{r import, echo=TRUE, eval=FALSE}
+# import csv file
+diabetes_df_raw <- rio::import(here('diabetes.csv'))
+```
+
+\newpage
+# Exploratory Data Analysis and Wrangling
+## Overview
+To get a better understanding of the dataset, we take a look at it and print the summary statistics.
+```{r exploratory_data_analysis, eval=TRUE, echo=TRUE}
+# structure
+glimpse(diabetes_df_raw)
+
+# summary
+summary(diabetes_df_raw)
+```
+The dataset consists of 768 observations of 9 variables. These are:
+
+- pregnancies,
+- glucose,
+- blood pressure,
+- skin thickness,
+- insulin,
+- BMI,
+- diabetes pedigree function,
+- age, and 
+- outcome.
+
+Intrestingly, the summary statistics show many zero values for some of the variables. In some cases we have so many zero values that even the first quantile is affected, e.g. in the case of insulin.
+After some changes in the data frame, we check how many zeros we have for each potential predictor.
+```{r tidy_column_names, eval=FALSE, echo=TRUE}
+# tidy column names, outcome not as factor of numeric data (problems in model_building)
+diabetes_df_clean <- diabetes_df_raw %>% 
+  janitor::clean_names() %>% 
+  mutate(# id = 1:nrow(diabetes_df),
+         outcome = if_else(outcome == '0', 'no', 'yes')) %>%
+  mutate(outcome = factor(outcome)) %>% 
+  rename(diabetes_p_fct = diabetes_pedigree_function) %>%
+  mutate(across(where(is.integer), as.double))
+```
+```{r check_zeros, eval=TRUE, echo=TRUE}
+# check how many zero we have in each column
+diabetes_df_clean %>%
+  mutate_if(is.numeric, ~(. == 0)) %>%
+  dplyr::select(-outcome) %>%
+  colSums() %>% 
+  print()
+```
+We are missing data for some variables. In the case of insulin, there is no data available for 374 patients. 
+```{r insulin_na_count, eval=TRUE, echo=TRUE}
+# percentage of NAs in insulin variable
+na_percentage <- 374/nrow(diabetes_df_clean)*100
+print(na_percentage)
+```
+This affects 48.7\ \% of all patients and will influence our machine learning models markedly.
+
+
+```{r boxplots_diabetes_df_clean, eval=TRUE, echo=TRUE}
+# plot all variables for diabetes_data_clean
+diabetes_df_clean %>% 
+  pivot_longer(cols = -outcome, names_to = 'param') %>% 
+  ggplot(aes(x = value)) +
+  geom_histogram(color = 'black') +
+  facet_wrap(~param, scales = 'free')
+```
+The boxplots visualize the impact these missing values have on the normal distribution of the variables blood pressure, body mass index, glucose, skin thickness, and especially insulin.
+
+## Data Pre-processing
+Therefore, we are going to impute the missing data with values generated by the `mice` package using Fully Conditional Specification implemented by the MICE algorithm as described by Van Buuren and Groothuis-Oudshoorn in 2011 [@van2011mice].
+```{r replace_zero_values, echo=TRUE, eval=FALSE}
+# which columns to modify? -> blood_pressure, bmi, glucose, insulin, skin_thickness
+variables_to_adjust <- c('blood_pressure', 'bmi', 'glucose', 'insulin', 'skin_thickness')
+# replace zero values in relevant variables with NA
+diabetes_df <- diabetes_df_clean
+for (i in seq_along(variables_to_adjust)) {
+  diabetes_df[, variables_to_adjust[i]][diabetes_df[, variables_to_adjust[i]] == 0] <- NA
+}
+# replace NA with model data generated by mice package
+mice_mod <- mice(diabetes_df[, variables_to_adjust], method = 'rf', seed = 1234,
+                    printFlag = FALSE)
+diabetes_df[, variables_to_adjust] <- complete(mice_mod)
+```
+The affected variables look now normally distributed. 
+```{r boxplot_diabetes_df, echo=TRUE, eval=TRUE}
+# plot all variables for diabetes_data with modified dataset
+diabetes_df %>% 
+  pivot_longer(cols = -outcome, names_to = 'param') %>% 
+  ggplot(aes(x = value)) +
+  geom_histogram(color = 'black') +
+  facet_wrap(~param, scales = 'free')
+```
+Now we can get a first idea of which variables have a higher impact on the outcome than others.
+```{r density_plot_diabetes_df, echo=TRUE, eval=TRUE}
+# density plots for each param depending on the outcome
+diabetes_df %>% 
+  pivot_longer(cols = -outcome,
+               names_to = 'variable',
+               values_to = 'value') %>%
+  ggplot(aes(value)) +
+  geom_density(aes(fill = outcome), alpha = 0.5) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 0.5),
+        strip.text = element_text(size=8)) +
+  facet_wrap(~variable, scales = 'free', nrow = 2)
+```
+The density plot reveals that patients with diabetes tend to have higher levels of glucose and insulin while others, e.g. like blood pressure, have seemingly no impact.
+
+
+## Split the data set into training, validation and test set
+Now we split the dataset into three different subsets in the ratio 80/10/10. The largest subset will be used for training the model and one of the smaller ones to validate the model performance on new data. Because the ultimate goal of a machine learning algorithm is to perform with completely new datasets the third subset will be used to test the performance of the final model.
+
+```{r split_diabetes_df, echo=TRUE, eval=FALSE}
+# split data into train, validation and test sets
+# Final hold-out test set will be 10% of MovieLens data
+set.seed(1, sample.kind='Rounding') # if using R 3.6 or later
+test_index <- createDataPartition(y = diabetes_df$outcome, times = 1, p = 0.2, list = FALSE)
+diabetes_train <- diabetes_df[-test_index,]
+temp <- diabetes_df[test_index,]
+
+# split temp into validation and test sets
+test_index <- createDataPartition(y = temp$outcome, times = 1, p = 0.5, list = FALSE)
+diabetes_validation <- temp[-test_index,]
+diabetes_test <- temp[test_index,]
+
+# rm unnecessary data
+rm(test_index, temp)
+
+# inspect train set
+table(diabetes_train$outcome)
+```
+The training set is unbalanced and contains predominantly healthy subjects.
+
+## Correlation between variables
+We can now inspect the relationship between variables in the training set.
+```{r corr_plot, echo=TRUE, eval=TRUE}
+# create matrix of diabetes_train
+corr_df <- diabetes_train %>% 
+  mutate(outcome = as.factor(ifelse(outcome == 'no', '0', '1')))
+
+# analyze the correlation (Pearson's), include p-values; use Hmisc package
+res <- rcorr(as.matrix(corr_df))
+
+# plot the correlation of variables
+corrplot(res$r, type = "upper", tl.cex = .7, order = 'FPC',
+         tl.col = "black")
+```
+As already shown in the density plots, glucose and insulin levels are highly positively correlated with a diabetes diagnosis. Apart from blood pressure, all other variables also appear to have a positive influence. However, none of the correlations is greater than 0.75. With the exception of blood pressure, we cannot exclude any of the variables.
+
+\newpage
+# Method development
+Apart from one explanatory model, classification trees, we are going to use predictive models and train them with the entire `diabetes_train` set. We define the control parameters for the `train()` function the following way:
+```{r fit_control, echo=TRUE, eval=FALSE}
+# define fit for control function
+fit_control <- trainControl(method = "cv",
+                            number = 5,
+                            classProbs = TRUE,
+                            summaryFunction = twoClassSummary)
+```
+
+## Model 1: Guessing
+We choose weighted guessing as our baseline classifier. In this case we just ignore the medical predictors and guess at the weighted percentages of each class. 
+```{r model_1, echo=TRUE, eval=FALSE}
+# percentage of positive diagnoses
+ratio <- diabetes_train$outcome %>% 
+  as.character() %>% 
+  str_replace_all(., c('no'='0','yes'='1')) %>% 
+  as.numeric() %>% 
+  mean()
+
+# build a model
+set.seed(1, sample.kind = 'Rounding')
+predicted_outcomes <- diabetes_validation %>% 
+  mutate(guess = sample(c(0, 1), 
+                        size = n(), 
+                        replace = TRUE, 
+                        prob = c((1-ratio), ratio))) %>% 
+  mutate(guess = as.factor(str_replace_all(guess, c('0'='no','1'='yes')))) %>%
+  pull(guess)
+
+# evaluation metrics
+params_model_1 <- confusionMatrix_params(data = predicted_outcomes, 
+                                         reference = diabetes_validation$outcome)
+```
+
+## Model 2: Logistic Regression
+Logistic regression is limited to only two-class classification problems. We predict the categorical dependent variable `outcome` using all independent variables. 
+```{r model_2, echo=TRUE, eval=FALSE}
+# set the seed
+set.seed(1, sample.kind = 'Rounding')
+
+# do linear model with caret package glm
+model_2 <- caret::train(outcome ~ ., 
+                        method = 'glm',
+                        family = 'binomial',
+                        metric = 'ROC',
+                        tuneLength=10,
+                        preProcess = c('center', 'scale'),
+                        trControl = fit_control,
+                        data = diabetes_train)
+
+# predict outcomes using model 2
+predicted_outcomes <- predict(model_2, diabetes_validation)
+
+# evaluation metrics
+params_model_2 <- confusionMatrix_params(data = predicted_outcomes, 
+                                         reference = diabetes_validation$outcome)
+```
+
+## Model 3: Random Forest
+A random forest is a classification and regression method that consists of several uncorrelated decision trees. All decision trees are grown under a certain type of randomization during the learning process. The individual trees are then combined to form an ensemble, the Random Forest.
+```{r model_3, echo=TRUE, eval=FALSE}
+# set the seed
+set.seed(1, sample.kind = 'Rounding')
+
+# train the model
+model_3 <- train(outcome ~ .,
+                diabetes_train,
+                method = 'rf',
+                tuneLength = 2,
+                trControl = fit_control)
+
+# predict outcomes using model 3
+predicted_outcomes <- predict(model_3, diabetes_validation)
+
+# evaluation metrics
+params_model_3 <- confusionMatrix_params(data = predicted_outcomes, 
+                                         reference = diabetes_validation$outcome)
+```
+
+
+## Model 4: Fitting XGBoost
+XGBoost is short for "eXtreme Gradient Boosting" and an open-source software library. This method is based on decision trees and represents an improvement on other methods such as random forest and gradient boosting.
+```{r model_4, echo=TRUE, eval=FALSE}
+# create tuning grid
+xgb_grid = expand.grid(
+  nrounds = 50,
+  eta = c(0.03),
+  max_depth = 1,
+  gamma = 0,
+  colsample_bytree = 0.6,
+  min_child_weight = 1,
+  subsample = 0.5
+)
+
+# create model
+set.seed(1, sample.kind = 'Rounding')
+model_4 <- train(outcome ~ .,
+                 diabetes_train,
+                 method = 'xgbTree',
+                 metric = 'ROC',
+                 tuneGrid = xgb_grid,
+                 trControl = fit_control)
+
+# predict outcomes using model 4
+predicted_outcomes <- predict(model_4, diabetes_validation)
+
+# evaluation metrics
+params_model_4 <- confusionMatrix_params(data = predicted_outcomes, 
+                                         reference = diabetes_validation$outcome)
+```
+
+## Model 5: K-nearest neighbors
+The K-nearest neighbor (kNN) algorithm, is a nonparametric supervised learning classifier that uses the concept of proximity to make classifications or predictions about the grouping of a single data point. It is based on the assumption that similar points can be found in proximity to each other.
+```{r model_5, echo=TRUE, eval=FALSE}
+# tune k, perform cross-validation
+set.seed(3, sample.kind = 'Rounding')
+model_5 <- train(outcome ~ .,
+                 diabetes_train,
+                 method = 'knn',
+                 metric = 'ROC',
+                 trControl = fit_control,
+                 tuneGrid = expand.grid(k = seq(1, 101, 2))
+)
+
+# predict outcomes using model 5
+predicted_outcomes <- predict(model_5, diabetes_validation)
+
+# evaluation metrics
+params_model_5 <- confusionMatrix_params(data = predicted_outcomes, 
+                                         reference = diabetes_validation$outcome)
+```
+
+
+## Model 6: Naive Bayes
+The Naive Bayes classifier is a supervised machine learning model based on Bayes' Theorem with the “naive” assumption of conditional independence between every pair of features. The approach is mathematically similar to the logistic regression prediction.
+```{r model_6, echo=TRUE, eval=FALSE}
+# set up tuning grid
+search_grid <- expand.grid(
+  usekernel = c(TRUE, FALSE),
+  fL = 0:5,
+  adjust = seq(0, 5, by = 1)
+)
+
+# train model
+set.seed(3, sample.kind = 'Rounding')
+model_6 <- train(outcome ~ .,
+                 diabetes_train,
+                 method = 'nb',
+                 trControl = fit_control,
+                 tuneGrid = search_grid,
+                 preProc = c("BoxCox", "center", "scale", "pca"))
+
+# predict outcomes using model 6
+predicted_outcomes <- predict(model_6, diabetes_validation)
+
+# evaluation metrics
+params_model_6 <- confusionMatrix_params(data = predicted_outcomes, 
+                                         reference = diabetes_validation$outcome)
+```
+
+
+## Model 7: Decision Tree
+Classification trees, or decision trees, are another approach to predict the outcome in classification and regression problems. Predictions are formed by calculating which class is the most common among the training set observations. In the flow-chart like structure, each node represents a "test" on a variable which are connected by branches.
+```{r model_7, echo=TRUE, eval=FALSE}
+# train model
+set.seed(3, sample.kind = 'Rounding')
+model_7 <- train(outcome ~ .,
+                 diabetes_train,
+                 method = 'rpart',
+                 metric = 'ROC',
+                 tuneLength = 20,
+                 trControl = fit_control)
+
+# predict outcomes using model 7
+predicted_outcomes <- predict(model_7, diabetes_validation)
+
+# evaluation metrics
+params_model_7 <- confusionMatrix_params(data = predicted_outcomes, 
+                                         reference = diabetes_validation$outcome)
+```
+In the resulting decision tree subjects with high glucose level, high body mass index and of advanced age are more likely to be classfied as diabetic.
+```{r decision_tree, echo=TRUE, eval=TRUE}
+# plot
+rpart.plot(model_7$finalModel, type = 4, extra = 2,
+           cex = .45, fallen.leaves = TRUE)
+```
+
+\newpage
+# Results and Discussion
+The following table provides an overview of the key-performance characteristics of all seven models.
+```{r model_comparison, eval=TRUE, echo=TRUE}
+# bind evaluation params
+eval_params <- rbind(params_model_1, 
+                     params_model_2,
+                     params_model_3,
+                     params_model_4,
+                     params_model_5,
+                     params_model_6,
+                     params_model_7
+) %>% 
+  mutate(`Model No.` = c(1:7),
+         `Model name` = c('Guess','glm','RF','XGBoost','kNN', 'NB', 'rpart'),
+         .before = f_value)
+knitr::kable(eval_params, digits = 5)
+```
+As expected, simple guessing delivers by far the worst results. Based on the $F_{1}$-score, the kNN approach performs best. It has also the second highest value for $\kappa$. The performance of the Random Forests model is comparable. 
+We now merge the `diabetes_train` data set with the `diabetes_validation` set and use the combined data to retrain our final model utilizing the kNN algorithm.
+```{r model_final, eval=FALSE, echo=TRUE}
+### do it for the final test set
+# merge diabetes_train and diabetes_validation
+diabetes_df_final <- full_join(
+  diabetes_train, diabetes_validation
+)
+
+# train the final model, therefore tune k, perform cross-validation
+set.seed(2, sample.kind = 'Rounding')
+model_final <- train(outcome ~ .,
+                     diabetes_df_final,
+                     method = 'knn',
+                     metric = 'ROC',
+                     trControl = fit_control,
+                     tuneGrid = expand.grid(k = seq(1, 101, 2))
+)
+
+# predict outcomes for diabetes_test using model_final
+predicted_outcomes <- predict(model_final, diabetes_test)
+
+# evaluation metrics
+params_model_final <- confusionMatrix_params(data = predicted_outcomes, 
+                                             reference = diabetes_test$outcome)
+```
+```{r params_model_final, echo=TRUE, eval=TRUE}
+knitr::kable(params_model_final, digits = 5)
+```
+The final model achieves a $F_{1}$-score of `r {toString(round(params_model_final$f_value, 5))}`. Predictably, the final model performs worse on the `diabetes_test` set than on the `diabetes_validation` set. Although we reach high sensitivity, the specificity is below 0.5. This inevitably results in a moderate kappa (`r {toString(round(params_model_final$kappa, 5))}`). This can also be seen in the confusion matrix, which shows a relatively high amount of false negatives.
+```{r confusion_matrix_final, echo=TRUE, eval=TRUE}
+knitr::kable(data.frame(cm$table))
+```
+
+# Conclusion
+The objective of the project was to build a machine learning model to predict the diabetes diagnosis of Pima Indians. We have developed various approaches to solve this classification problem. The final model showed high sensitivity but very low specificity. Thus, it should be possible to develop a predicitive model which can generate better results.
+Some approaches that could be tested are:
+
+- building a stacked model,
+- implementing more advanced machine learning models,
+- using different imputation techniques.
+
+\newpage
+# References
